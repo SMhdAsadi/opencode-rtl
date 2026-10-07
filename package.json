@@ -1,0 +1,16 @@
+{
+  "name": "opencode-rtl",
+  "version": "0.4.3",
+  "description": "Smart RTL patcher for the OpenCode desktop app (UI-only, global). Inspired by antigravity-rtl.",
+  "type": "module",
+  "bin": {
+    "opencode-rtl": "./bin/opencode-rtl.js"
+  },
+  "dependencies": {
+    "@electron/asar": "^4.2.0"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "license": "MIT"
+}

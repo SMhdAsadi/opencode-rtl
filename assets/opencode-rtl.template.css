@@ -1,0 +1,371 @@
+/* OPENCODE RTL PATCH v0.4.3 — UI-only. No model/prompt/tool changes.
+ * The font data URI below is filled with base64 at patch time (offline
+ * embedding, no extra file request). Do not break up the token on line 10:
+ * patch.js replaces its first occurrence.
+ */
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("data:font/woff2;base64,__VAZIRMATN_WOFF2_B64__") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+/* Base font scope: Persian/Arabic glyphs use Vazirmatn, everything else
+   falls through to the next family. Explicit (not just inherited) so inner
+   elements with app-set fonts are covered too. */
+body.oc-rtl-on #root,
+body.oc-rtl-on #root [data-component="markdown"],
+body.oc-rtl-on #root [data-timeline-row],
+body.oc-rtl-on #root textarea,
+body.oc-rtl-on #root [contenteditable="true"] {
+  font-family: "Vazirmatn", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji" !important;
+}
+
+/* Base alignment for text blocks. The script always sets an explicit dir
+   attribute (content-aware majority rule), so `start` resolves correctly
+   per block. NOTE: no `unicode-bidi: plaintext` here on purpose — it would
+   re-derive the base direction from the first strong character and detach
+   leading digit runs ("۱. heading" → number migrates to the far end). */
+body.oc-rtl-on #root p,
+body.oc-rtl-on #root li,
+body.oc-rtl-on #root h1,
+body.oc-rtl-on #root h2,
+body.oc-rtl-on #root h3,
+body.oc-rtl-on #root h4,
+body.oc-rtl-on #root h5,
+body.oc-rtl-on #root h6,
+body.oc-rtl-on #root blockquote,
+body.oc-rtl-on #root td,
+body.oc-rtl-on #root th,
+body.oc-rtl-on #root dd,
+body.oc-rtl-on #root dt,
+body.oc-rtl-on #root figcaption {
+  text-align: start;
+}
+
+/* Leading number-run pin: headings like "۱. نقل‌قول" start with weak digits
+   that bidi would otherwise push to the far end of the line. The script wraps
+   that run in .oc-rtl-num with the block's own direction; embed keeps the run
+   glued to the line start in visual order. */
+body.oc-rtl-on .oc-rtl-num {
+  unicode-bidi: embed;
+}
+
+/* Leading marker pin: a leading ">" / "<" run is virtually always a marker,
+   never prose — but U+003E/U+003C are *mirrored* characters, so an RTL
+   paragraph would display ">" as "<". LTR-isolate the run so markers never
+   mirror, in either direction. */
+body.oc-rtl-on .oc-rtl-ltr {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Decisive alignment: wherever the script determined RTL (or LTR), align
+   accordingly. Beats any app rule (id + class + attribute). */
+body.oc-rtl-on #root [dir="rtl"]:not(pre):not(code):not(.xterm) {
+  text-align: right !important;
+}
+
+body.oc-rtl-on #root [dir="ltr"] {
+  text-align: left !important;
+}
+
+/* Lists / quotes / tables use logical properties in the app stylesheet, so a
+   dir attribute on the container flips markers, padding, borders and column
+   order automatically. No extra rules needed here. */
+
+/* Force-RTL mode: right-align text even when majority-English. */
+body.oc-rtl-on.oc-rtl-force #root p,
+body.oc-rtl-on.oc-rtl-force #root li,
+body.oc-rtl-on.oc-rtl-force #root h1,
+body.oc-rtl-on.oc-rtl-force #root h2,
+body.oc-rtl-on.oc-rtl-force #root h3,
+body.oc-rtl-on.oc-rtl-force #root h4,
+body.oc-rtl-on.oc-rtl-force #root h5,
+body.oc-rtl-on.oc-rtl-force #root h6,
+body.oc-rtl-on.oc-rtl-force #root blockquote,
+body.oc-rtl-on.oc-rtl-force #root td,
+body.oc-rtl-on.oc-rtl-force #root th {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* Code, terminal, editor, diffs always stay LTR — with a real monospace
+   stack so they never inherit the proportional UI font. */
+body.oc-rtl-on pre,
+body.oc-rtl-on pre *,
+body.oc-rtl-on code,
+body.oc-rtl-on code *,
+body.oc-rtl-on .xterm,
+body.oc-rtl-on .xterm *,
+body.oc-rtl-on [class*="monaco"],
+body.oc-rtl-on [class*="monaco"] *,
+body.oc-rtl-on [class*="terminal"],
+body.oc-rtl-on [class*="terminal"] *,
+body.oc-rtl-on [class*="diff"],
+body.oc-rtl-on [class*="diff"] *,
+body.oc-rtl-on kbd {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+  text-align: left !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace !important;
+}
+
+/* Inputs follow content direction. */
+body.oc-rtl-on textarea,
+body.oc-rtl-on [contenteditable="true"] {
+  unicode-bidi: plaintext;
+}
+
+/* ---- Floating RTL pill ---- */
+#oc-rtl-pill {
+  position: fixed;
+  bottom: 16px;
+  inset-inline-start: 16px;
+  z-index: 999999;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-base, rgba(127, 127, 127, 0.4));
+  background: var(--surface-base, rgba(20, 20, 20, 0.85));
+  color: inherit;
+  font-size: 12px;
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+  cursor: pointer;
+  opacity: 0.7;
+  user-select: none;
+}
+
+#oc-rtl-pill:hover {
+  opacity: 1;
+}
+
+#oc-rtl-pill .oc-rtl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+body.oc-rtl-on #oc-rtl-pill .oc-rtl-dot {
+  background: #10b981;
+}
+
+body.oc-rtl-on.oc-rtl-force #oc-rtl-pill .oc-rtl-dot {
+  background: #3b82f6;
+}
+
+/* ---- Popup panel (settings UI stays LTR for clarity) ---- */
+#oc-rtl-panel {
+  position: fixed;
+  bottom: 52px;
+  left: 16px;
+  z-index: 1000000;
+  width: 264px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-base, rgba(127, 127, 127, 0.35));
+  background: var(--surface-base, #1c1c1e);
+  color: var(--text-base, #f4f4f5);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+#oc-rtl-panel[hidden] {
+  display: none;
+}
+
+.oc-rtl-phead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-base, rgba(127, 127, 127, 0.25));
+  margin-bottom: 4px;
+}
+
+.oc-rtl-pglobe {
+  font-size: 15px;
+}
+
+.oc-rtl-ptitle {
+  font-weight: 650;
+}
+
+.oc-rtl-pver {
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.oc-rtl-pclose {
+  margin-inline-start: auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.oc-rtl-pclose:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.2);
+}
+
+.oc-rtl-prow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 2px;
+}
+
+.oc-rtl-ptext .oc-rtl-pt {
+  font-weight: 550;
+}
+
+.oc-rtl-pfa {
+  opacity: 0.65;
+  font-weight: 400;
+}
+
+.oc-rtl-ptext .oc-rtl-ps {
+  font-size: 11.5px;
+  opacity: 0.6;
+}
+
+.oc-rtl-switch {
+  flex: none;
+  width: 40px;
+  height: 22px;
+  border-radius: 9999px;
+  border: none;
+  background: rgba(150, 150, 150, 0.45);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+  padding: 0;
+}
+
+.oc-rtl-switch.on {
+  background: #10b981;
+}
+
+.oc-rtl-switch .oc-rtl-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.oc-rtl-switch.on .oc-rtl-knob {
+  transform: translateX(18px);
+}
+
+.oc-rtl-pfont {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.oc-rtl-pfont.ok {
+  color: #10b981;
+  opacity: 1;
+}
+
+.oc-rtl-pfont.bad {
+  color: #f87171;
+  opacity: 1;
+}
+
+.oc-rtl-psec {
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  margin: 8px 2px 4px;
+}
+
+.oc-rtl-pkeys {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.oc-rtl-pkey {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.oc-rtl-kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-base, rgba(127, 127, 127, 0.4));
+  background: rgba(127, 127, 127, 0.18);
+  font-size: 11px;
+  font-family: ui-monospace, monospace !important;
+}
+
+.oc-rtl-pbtns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.oc-rtl-pbtn {
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #10b981;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.oc-rtl-pbtn:hover {
+  filter: brightness(1.08);
+}
+
+.oc-rtl-pbtn-ghost {
+  flex: 0 0 auto;
+  background: transparent;
+  color: inherit;
+  border-color: var(--border-base, rgba(127, 127, 127, 0.4));
+  opacity: 0.8;
+}
+
+.oc-rtl-pmsg {
+  min-height: 16px;
+  font-size: 11.5px;
+  opacity: 0.75;
+  margin-top: 6px;
+}
+
+.oc-rtl-pfoot {
+  font-size: 10.5px;
+  opacity: 0.45;
+  margin-top: 2px;
+}
