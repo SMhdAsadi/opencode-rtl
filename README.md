@@ -20,9 +20,9 @@ UI-only RTL patcher for the **OpenCode desktop app** (macOS, Windows, Linux). In
 ## Usage
 
 ```sh
-npx @smhdasadi/opencode-rtl                 # patch (quit OpenCode first)
-npx @smhdasadi/opencode-rtl --status        # check state
-npx @smhdasadi/opencode-rtl --restore       # revert to original
+npx @smhd/opencode-rtl                 # patch (quit OpenCode first)
+npx @smhd/opencode-rtl --status        # check state
+npx @smhd/opencode-rtl --restore       # revert to original
 ```
 
 Requires Node 22.12+.
@@ -66,7 +66,7 @@ install instead, or point `--path` at an extracted copy.
   `app.asar` (`EBUSY`). If access is still denied, run the terminal as
   Administrator.
 - **Linux:** `/opt` and `/usr` are root-owned — re-run with `sudo`
-  (`sudo npx @smhdasadi/opencode-rtl`).
+  (`sudo npx @smhd/opencode-rtl`).
 
 On detection failure the tool prints every path it searched.
 

@@ -1,5 +1,5 @@
 {
-  "name": "@smhdasadi/opencode-rtl",
+  "name": "@smhd/opencode-rtl",
   "version": "0.4.4",
   "description": "Smart RTL patcher for the OpenCode desktop app (UI-only, global). Inspired by antigravity-rtl.",
   "type": "module",
