@@ -17,6 +17,7 @@
 body.oc-rtl-on #root,
 body.oc-rtl-on #root [data-component="markdown"],
 body.oc-rtl-on #root [data-timeline-row],
+body.oc-rtl-on #root [data-titlebar-tab-title],
 body.oc-rtl-on #root textarea,
 body.oc-rtl-on #root [contenteditable="true"] {
   font-family: "Vazirmatn", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
@@ -69,6 +70,18 @@ body.oc-rtl-on #root [dir="rtl"]:not(pre):not(code):not(.xterm) {
 }
 
 body.oc-rtl-on #root [dir="ltr"] {
+  text-align: left !important;
+}
+
+/* Titlebar tabs: single-line truncated flex titles. The script sets dir on
+   both the title span and the [data-titlebar-tab] root (so the app's own
+   `:dir(rtl)` fade mask flips to `to left` and logical flex properties
+   mirror icon/text order). Align the title text with its direction. */
+body.oc-rtl-on #root [data-titlebar-tab-title][dir="rtl"] {
+  text-align: right !important;
+}
+
+body.oc-rtl-on #root [data-titlebar-tab-title][dir="ltr"] {
   text-align: left !important;
 }
 

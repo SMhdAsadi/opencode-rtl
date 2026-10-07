@@ -86,6 +86,14 @@
   const CONTAINER_SEL =
     '#root [data-component="markdown"] ul, #root [data-component="markdown"] ol,' +
     ' #root [data-component="markdown"] table, #root [data-component="markdown"] blockquote';
+  // Titlebar tabs: <span data-titlebar-tab-title> holds the session title
+  // (plain textContent, updated by the app on rename/navigation). The app's
+  // own stylesheet is direction-aware here — overflow fade switches via
+  // `[data-titlebar-tab]...:dir(rtl)` and the close button/separators use
+  // logical properties — so the tab ROOT must carry the title's direction,
+  // not just the span. Without this a Persian title stays LTR: left-aligned,
+  // icon/text order unmirrored, fade mask on the wrong edge.
+  const TAB_TITLE_SEL = '#root [data-titlebar-tab-title]';
   const EXCLUDE_SEL = "pre, code, .xterm, [class*=monaco], [class*=terminal], kbd";
 
   function nearestExcluded(el) {
@@ -264,6 +272,31 @@
     pinLeadingRun(el, dir);
   }
 
+  // Titlebar tab titles: content-aware dir on the title span AND the tab
+  // root (so the app's `:dir(rtl)` fade + logical flex mirroring engage).
+  // No leading-run pinning here — single-line truncated titles; Range surgery
+  // would churn the DOM the app measures for overflow (scrollWidth).
+  // Skipped while renaming (ancestor [data-editing="true"]).
+  function processTabTitle(el) {
+    if (el.closest('[data-editing="true"]')) return;
+    if (nearestExcluded(el)) return;
+    const tab = el.closest("[data-titlebar-tab]");
+    const text = cleanText(el.textContent || "");
+    if (!text) {
+      if (el.hasAttribute("dir")) el.removeAttribute("dir");
+      if (tab && tab.hasAttribute("dir")) tab.removeAttribute("dir");
+      return;
+    }
+    const dir = dirFor(text);
+    if (dir === "auto") {
+      if (el.hasAttribute("dir")) el.removeAttribute("dir");
+      if (tab && tab.hasAttribute("dir")) tab.removeAttribute("dir");
+      return;
+    }
+    setDir(el, dir);
+    if (tab) setDir(tab, dir);
+  }
+
   function applyTextDirections() {
     if (!cfg.isRTL) return;
     let nodes;
@@ -304,6 +337,15 @@
       if (!text) continue;
       setDir(el, dirFor(text));
     }
+    // Titlebar tabs (chrome, not markdown): direction per tab title so
+    // Persian titles render RTL with the app's own :dir(rtl) fade.
+    let tabTitles;
+    try {
+      tabTitles = document.querySelectorAll(TAB_TITLE_SEL);
+    } catch (_) {
+      tabTitles = [];
+    }
+    for (const el of tabTitles) processTabTitle(el);
   }
 
   function applyInputDirections() {
@@ -514,6 +556,8 @@
           numPins: document.querySelectorAll("#root .oc-rtl-num").length,
           ltrPins: document.querySelectorAll("#root .oc-rtl-ltr").length,
           quotes: document.querySelectorAll('#root [data-component="markdown"] blockquote').length,
+          tabTitles: document.querySelectorAll("#root [data-titlebar-tab-title]").length,
+          tabRtl: document.querySelectorAll('#root [data-titlebar-tab][dir="rtl"]').length,
         },
         samples: {
           firstQuote: sampleHTML('#root [data-component="markdown"] blockquote'),
