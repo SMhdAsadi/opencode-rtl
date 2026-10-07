@@ -1,28 +1,56 @@
 #!/usr/bin/env node
 // opencode-rtl — UI-only RTL patcher for the OpenCode desktop app.
-// Global: patches /Applications/OpenCode.app itself, no per-repo changes.
+// Cross-platform (macOS / Windows / Linux): patches the installed app's
+// app.asar in place, no per-repo changes.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectAsarPath, isPatched, hasBackup, patch, restore } from "../lib/patch.js";
+import {
+  detectAsarPath,
+  candidateAsarPaths,
+  detectUnpatchableInstall,
+  isPatched,
+  hasBackup,
+  patch,
+  restore,
+} from "../lib/patch.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = path.join(__dirname, "..", "assets");
 const args = process.argv.slice(2);
 
 function help() {
-  console.log(`opencode-rtl — UI-only RTL patch for OpenCode desktop app
+  console.log(`opencode-rtl — UI-only RTL patch for the OpenCode desktop app
 
 Usage:
-  opencode-rtl                  Patch auto-detected OpenCode.app
+  opencode-rtl                  Patch auto-detected OpenCode install
   opencode-rtl --status         Show patch status
   opencode-rtl --restore        Restore original app.asar from backup
   opencode-rtl --path <asar>    Use a custom app.asar path
   opencode-rtl -h | --help      This help
 
+Default app.asar locations:
+  macOS:   /Applications/OpenCode.app/Contents/Resources/app.asar
+  Windows: %LOCALAPPDATA%\\Programs\\OpenCode\\resources\\app.asar
+           (%PROGRAMFILES%\\OpenCode\\… and Scoop
+            %USERPROFILE%\\scoop\\apps\\opencode-desktop\\current\\…
+            are also searched)
+  Linux:   /opt/OpenCode/resources/app.asar (.deb; .rpm under /usr/lib)
+
 Notes:
-  • Quit OpenCode before patching.
+  • Quit OpenCode before patching (a running app locks app.asar,
+    especially on Windows) and restart it afterwards.
   • Re-run after every OpenCode update (updates overwrite app.asar).
+  • AppImage and snap installs are read-only squashfs and cannot be
+    patched in place — use the .deb/.rpm/tarball, or point --path at
+    an extracted copy.
+  • If permission is denied:
+      macOS:   System Settings > Privacy & Security > App Management
+               for your terminal (sudo not required).
+      Windows: quit OpenCode, then re-run; if still denied, run the
+               terminal as Administrator.
+      Linux:   /opt and /usr are root-owned — re-run with sudo.
   • UI-only: no model, prompt, or tool-output changes.
   • Settings persist in the app's localStorage (global across repos).
 `);
@@ -33,7 +61,20 @@ function resolveAsar() {
   if (i !== -1 && args[i + 1]) return args[i + 1];
   const found = detectAsarPath();
   if (!found) {
-    console.error("Could not locate OpenCode app.asar. Pass --path <.../app.asar>.");
+    console.error("Could not locate OpenCode app.asar. Searched:");
+    for (const c of candidateAsarPaths()) console.error(`  - ${c}`);
+    const blocked = detectUnpatchableInstall();
+    if (blocked?.kind === "AppImage") {
+      console.error(`\nFound an AppImage at ${blocked.path}, but AppImages are`);
+      console.error("read-only squashfs and cannot be patched in place.");
+      console.error("Use the .deb/.rpm/tarball install instead, or --path <.../app.asar>.");
+    } else if (blocked?.kind === "snap") {
+      console.error(`\nFound a snap install at ${blocked.path}, but snaps are`);
+      console.error("read-only squashfs and cannot be patched in place.");
+      console.error("Use the .deb/.rpm/tarball install instead, or --path <.../app.asar>.");
+    } else {
+      console.error("Pass --path <.../app.asar> to point at your install.");
+    }
     process.exit(1);
   }
   return found;
@@ -66,6 +107,12 @@ if (args.includes("--restore") || args.includes("-r")) {
 
 // default: patch
 const asar = resolveAsar();
+if (/\.appimage$/i.test(asar) || /(^|\/)snap\//.test(asar)) {
+  console.error(`\n${asar} looks like an AppImage/snap install, which is read-only`);
+  console.error("squashfs and cannot be patched in place.");
+  console.error("Use the .deb/.rpm/tarball install instead, or --path <.../app.asar>.");
+  process.exit(1);
+}
 console.log(`Patching ${asar} ...`);
 console.log("Make sure OpenCode is quit first.");
 try {
@@ -73,13 +120,37 @@ try {
   console.log("\nPatched! Restart OpenCode to enjoy RTL.");
   console.log("Toggle: Alt+R (Option+R on macOS). Re-run after each OpenCode update.");
 } catch (e) {
-  if (/EACCES|EPERM|Permission denied/i.test(e.message)) {
-    console.error("\nPermission denied.");
-    console.error("macOS: give your terminal App Management permission:");
-    console.error("  System Settings > Privacy & Security > App Management");
-    console.error("Then run again (sudo not required for /Applications if you own it).");
+  const msg = e.message ?? String(e);
+  const locked = /EBUSY|resource busy/i.test(msg);
+  const denied = /EACCES|EPERM|Permission denied|operation not permitted/i.test(msg);
+  const readOnly = /EROFS|read-only file system/i.test(msg);
+  if (readOnly) {
+    console.error("\nRead-only filesystem — is this an AppImage or snap install?");
+    console.error("Those are read-only squashfs and cannot be patched in place.");
+    console.error("Use the .deb/.rpm/tarball install instead, or --path <.../app.asar>.");
+  } else if (locked) {
+    console.error("\napp.asar is locked — OpenCode (or an antivirus) is holding it.");
+    console.error("Quit OpenCode completely and run again.");
+    if (os.platform() === "win32")
+      console.error("If it is already quit, re-run this terminal as Administrator.");
+  } else if (denied) {
+    if (os.platform() === "darwin") {
+      console.error("\nPermission denied.");
+      console.error("macOS: give your terminal App Management permission:");
+      console.error("  System Settings > Privacy & Security > App Management");
+      console.error("Then run again (sudo not required for /Applications if you own it).");
+    } else if (os.platform() === "win32") {
+      console.error("\nPermission denied.");
+      console.error("Quit OpenCode, then re-run. If it still fails, run this");
+      console.error("terminal as Administrator and try again.");
+    } else {
+      console.error("\nPermission denied.");
+      if (asar.startsWith("/opt/") || asar.startsWith("/usr/"))
+        console.error("That path is root-owned — re-run with sudo and try again.");
+      else console.error("Check the file owner, or re-run with sudo, and try again.");
+    }
   } else {
-    console.error(`\nPatch failed: ${e.message}`);
+    console.error(`\nPatch failed: ${msg}`);
   }
   if (fs.existsSync(path.join(path.dirname(asar), "app-extracted-oc-rtl-temp"))) {
     fs.rmSync(path.join(path.dirname(asar), "app-extracted-oc-rtl-temp"), {

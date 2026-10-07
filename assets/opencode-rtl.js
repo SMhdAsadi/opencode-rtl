@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.3 — UI-only runtime. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.4.4 — UI-only runtime. No model/prompt/tool changes.
  * - Content-aware direction: each block AND each list/table/quote container
  *   follows its own majority script (RTL vs Latin). Diffs/code stay LTR.
  * - Settings in localStorage (global across repos).
@@ -343,7 +343,7 @@
   const IS_MAC = /Mac/i.test(navigator.userAgent || navigator.platform || "");
   const KEY_RTL = IS_MAC ? "⌥R" : "Alt+R";
   const KEY_FORCE = IS_MAC ? "⇧⌥R" : "Alt+Shift+R";
-  const VERSION = "0.4.3";
+  const VERSION = "0.4.4";
 
   function ensurePill() {
     if (document.getElementById("oc-rtl-pill")) return;
