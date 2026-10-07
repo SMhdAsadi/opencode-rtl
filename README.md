@@ -47,7 +47,8 @@ Auto-detection searches these `app.asar` paths (override with
 | OS      | Default path                                              | Source    |
 | ------- | --------------------------------------------------------- | --------- |
 | macOS   | `/Applications/OpenCode.app/Contents/Resources/app.asar`  | DMG / brew |
-| Windows | `%LOCALAPPDATA%\Programs\OpenCode\resources\app.asar`     | official installer (NSIS per-user) |
+| Windows | `%LOCALAPPDATA%\Programs\OpenCode\resources\app.asar`              | official installer (NSIS per-user) |
+| Windows | `%LOCALAPPDATA%\Programs\@opencodedesktop\resources\app.asar`     | website-install layout seen in the wild |
 | Windows | `%USERPROFILE%\scoop\apps\opencode-desktop\current\resources\app.asar` | Scoop |
 | Windows | `%PROGRAMFILES%\OpenCode\resources\app.asar`              | fallback (per-machine installs) |
 | Linux   | `/opt/OpenCode/resources/app.asar`                        | .deb |

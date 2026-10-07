@@ -33,9 +33,10 @@ Usage:
 Default app.asar locations:
   macOS:   /Applications/OpenCode.app/Contents/Resources/app.asar
   Windows: %LOCALAPPDATA%\\Programs\\OpenCode\\resources\\app.asar
-           (%PROGRAMFILES%\\OpenCode\\… and Scoop
-            %USERPROFILE%\\scoop\\apps\\opencode-desktop\\current\\…
-            are also searched)
+            (%LOCALAPPDATA%\\Programs\\@opencodedesktop\\…,
+             %PROGRAMFILES%\\OpenCode\\… and Scoop
+             %USERPROFILE%\\scoop\\apps\\opencode-desktop\\current\\…
+             are also searched)
   Linux:   /opt/OpenCode/resources/app.asar (.deb; .rpm under /usr/lib)
 
 Notes:
