@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.7 — UI-only runtime. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.4.8 — UI-only runtime. No model/prompt/tool changes.
  * - Content-aware direction: each block AND each list/table/quote container
  *   follows its own majority script (RTL vs Latin). Diffs/code stay LTR.
  * - Settings in localStorage (global across repos).
@@ -100,6 +100,7 @@
   const CONTAINER_INNER =
     '[data-component="markdown"] ul, [data-component="markdown"] ol,' +
     ' [data-component="markdown"] table, [data-component="markdown"] blockquote';
+  const INPUT_INNER = 'textarea,input,[contenteditable="true"]';
   const EXCLUDE_SEL = "pre, code, .xterm, [class*=monaco], [class*=terminal], kbd";
 
   function nearestExcluded(el) {
@@ -112,6 +113,15 @@
 
   function cleanText(text) {
     return (text || "").replace(/[​-‏﻿]/g, "").trim();
+  }
+
+  // Cheap full-text hash for the per-element signature guard: length +
+  // prefix alone misses same-length tail edits, while this is O(n)
+  // charCodes — the same order as the cleanText scan we already do.
+  function hashStr(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
   }
 
   // Prose text for direction voting: <code>/<pre> content is LTR technical
@@ -282,10 +292,11 @@
     }
     // Signature guard: skip the vote + pin work when neither the text nor
     // the mode changed since the last pass over this element. Streaming
-    // appends change the length, so growing paragraphs still re-process;
-    // static paragraphs cost one textContent read + one string compare.
-    const sig =
-      (cfg.forceRTL ? "F" : "A") + text.length + ":" + text.slice(0, 32);
+    // appends change the hash, so growing paragraphs still re-process;
+    // static paragraphs cost one textContent read + one hash compare.
+    // (Hashed over the FULL text: length + prefix alone would miss a
+    // same-length tail edit that flips the majority.)
+    const sig = (cfg.forceRTL ? "F" : "A") + text.length + ":" + hashStr(text);
     if (el.dataset.ocDirSig === sig) return;
     const dir = dirFor(text);
     setDir(el, dir);
@@ -433,6 +444,11 @@
       return;
     }
     (record.addedNodes || []).forEach(visit);
+    if (record.type === "childList" && (record.addedNodes || []).length === 0 && record.target) {
+      // Pure removal (no additions): re-vote the parent — usually a
+      // list/table/quote whose majority may have flipped with the deletion.
+      visit(record.target);
+    }
   }
 
   function applyIncremental(dirty) {
@@ -445,7 +461,16 @@
       return;
     }
     const containers = new Set();
+    const texts = new Set();
     for (const root of dirty) {
+      // A removal/insertion directly under #root (or body fallback) means
+      // top-level structure changed — one full scan beats a scoped query
+      // that would cover the whole document anyway.
+      if (root === document.body || root.id === "root") {
+        applyTextDirections();
+        applyInputDirections();
+        return;
+      }
       // Mirror the full-scan scope: only content under #root (plus the
       // tab bar inside it). Overlays/portals outside #root are the app's
       // own business.
@@ -459,20 +484,25 @@
         if (root.matches(TEXT_TAGS_INNER)) self = root;
         else if (root.matches(CONTAINER_INNER)) self = root;
         else if (root.matches('[data-titlebar-tab-title]')) self = root;
+        else if (root.matches(INPUT_INNER)) self = root;
       } catch (_) {}
       if (self) {
-        if (self.matches('[data-titlebar-tab-title]')) processTabTitle(self);
-        else if (self.matches(CONTAINER_INNER)) processContainerEl(self);
-        else processTextEl(self);
+        try {
+          if (self.matches('[data-titlebar-tab-title]')) processTabTitle(self);
+          else if (self.matches(INPUT_INNER)) processInputEl(self);
+          else if (self.matches(CONTAINER_INNER)) processContainerEl(self);
+          else processTextEl(self);
+        } catch (_) {}
       }
       // Descendants of the added subtree (scoped, not document-wide).
       try {
         if (root.querySelectorAll) {
           const subs = root.querySelectorAll(
-            TEXT_TAGS_INNER + "," + CONTAINER_INNER + ',[data-titlebar-tab-title]',
+            TEXT_TAGS_INNER + "," + CONTAINER_INNER + ',[data-titlebar-tab-title],' + INPUT_INNER,
           );
           for (const el of subs) {
             if (el.matches('[data-titlebar-tab-title]')) processTabTitle(el);
+            else if (el.matches(INPUT_INNER)) processInputEl(el);
             else if (el.matches(CONTAINER_INNER)) processContainerEl(el);
             else processTextEl(el);
           }
@@ -490,17 +520,28 @@
         }
       } catch (_) {}
       // Ancestors: a new paragraph changes its ul/table/blockquote's
-      // majority vote, so re-vote containers up to #root.
+      // majority vote, so re-vote containers up to #root. Also re-vote the
+      // nearest text-tag ancestor: streamed formatters often append an
+      // INLINE element (<span>/<em>/<strong>) to an existing paragraph,
+      // which matches nothing itself but changes the paragraph's vote.
       try {
         let a = root.parentElement;
+        let textTaken = false;
         while (a && a !== document.body) {
           if (a.id === "oc-rtl-pill" || a.id === "oc-rtl-panel") break;
-          if (a.matches && a.matches(CONTAINER_INNER)) containers.add(a);
+          try {
+            if (!textTaken && a.matches && a.matches(TEXT_TAGS_INNER)) {
+              texts.add(a);
+              textTaken = true;
+            }
+            if (a.matches && a.matches(CONTAINER_INNER)) containers.add(a);
+          } catch (_) {}
           if (a.id === "root") break;
           a = a.parentElement;
         }
       } catch (_) {}
     }
+    for (const el of texts) processTextEl(el);
     for (const el of containers) processContainerEl(el);
   }
 
@@ -534,7 +575,7 @@
   const IS_MAC = /Mac/i.test(navigator.userAgent || navigator.platform || "");
   const KEY_RTL = IS_MAC ? "⌥R" : "Alt+R";
   const KEY_FORCE = IS_MAC ? "⇧⌥R" : "Alt+Shift+R";
-  const VERSION = "0.4.7";
+  const VERSION = "0.4.8";
 
   function ensurePill() {
     if (document.getElementById("oc-rtl-pill")) return;
@@ -828,9 +869,13 @@
       }
       if (observer) observer.disconnect();
       try {
-        if (recs.length === 0) applyTextDirections();
-        else if (dirty.size > 120) applyTextDirections();
-        else applyIncremental(dirty);
+        if (recs.length === 0 || dirty.size > 120) {
+          // Visibility catch-up (no records) or huge batch: one full scan
+          // covering text AND inputs — the incremental path below handles
+          // neither the empty set nor document-scale batches.
+          applyTextDirections();
+          applyInputDirections();
+        } else applyIncremental(dirty);
       } finally {
         observe();
       }
