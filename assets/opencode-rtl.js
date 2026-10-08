@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.4 — UI-only runtime. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.4.7 — UI-only runtime. No model/prompt/tool changes.
  * - Content-aware direction: each block AND each list/table/quote container
  *   follows its own majority script (RTL vs Latin). Diffs/code stay LTR.
  * - Settings in localStorage (global across repos).
@@ -94,6 +94,12 @@
   // not just the span. Without this a Persian title stays LTR: left-aligned,
   // icon/text order unmirrored, fade mask on the wrong edge.
   const TAB_TITLE_SEL = '#root [data-titlebar-tab-title]';
+  // Inner selectors (no "#root " prefix) for el.matches() on incremental
+  // paths; the "#root "-prefixed versions are for document-wide queries.
+  const TEXT_TAGS_INNER = TEXT_TAGS.join(",");
+  const CONTAINER_INNER =
+    '[data-component="markdown"] ul, [data-component="markdown"] ol,' +
+    ' [data-component="markdown"] table, [data-component="markdown"] blockquote';
   const EXCLUDE_SEL = "pre, code, .xterm, [class*=monaco], [class*=terminal], kbd";
 
   function nearestExcluded(el) {
@@ -116,6 +122,11 @@
   // blocks keep their LTR verdict instead of losing their dir.
   function proseText(el) {
     try {
+      // Fast path (the common case): no pre/code inside, so textContent
+      // IS the prose — skip the cloneNode + remove + second textContent.
+      // querySelector on one element is far cheaper than deep-cloning its
+      // whole subtree on every pass.
+      if (!el.querySelector("pre,code")) return el.textContent || "";
       const clone = el.cloneNode(true);
       clone.querySelectorAll("pre,code").forEach((n) => n.remove());
       const t = clone.textContent || "";
@@ -262,14 +273,24 @@
   function processTextEl(el) {
     if (el.tagName === "P" && el.closest('[contenteditable="true"]')) return; // input path
     if (nearestExcluded(el)) return;
-    const text = cleanText(proseText(el));
+    const raw = proseText(el);
+    const text = cleanText(raw);
     if (!text) {
       if (el.hasAttribute("dir")) el.removeAttribute("dir");
+      delete el.dataset.ocDirSig;
       return;
     }
+    // Signature guard: skip the vote + pin work when neither the text nor
+    // the mode changed since the last pass over this element. Streaming
+    // appends change the length, so growing paragraphs still re-process;
+    // static paragraphs cost one textContent read + one string compare.
+    const sig =
+      (cfg.forceRTL ? "F" : "A") + text.length + ":" + text.slice(0, 32);
+    if (el.dataset.ocDirSig === sig) return;
     const dir = dirFor(text);
     setDir(el, dir);
     pinLeadingRun(el, dir);
+    el.dataset.ocDirSig = sig;
   }
 
   // Titlebar tab titles: content-aware dir on the title span AND the tab
@@ -308,9 +329,16 @@
     for (const el of nodes) processTextEl(el);
     // Leaf <div>s inside markdown (text with no element children). A div with
     // no child elements cannot have its flex order flipped, so dir is safe.
+    // NOTE: no `:has()` here — `:has(*)` forces the engine to test every
+    // div's subtree on each query, which dominates the profile on large
+    // tabs. Filter on firstElementChild instead (O(1) per div).
     let leafs;
     try {
-      leafs = document.querySelectorAll('#root [data-component="markdown"] div:not(:has(*))');
+      const divs = document.querySelectorAll('#root [data-component="markdown"] div');
+      leafs = [];
+      for (const el of divs) {
+        if (!el.firstElementChild) leafs.push(el);
+      }
     } catch (_) {
       leafs = [];
     }
@@ -348,18 +376,132 @@
     for (const el of tabTitles) processTabTitle(el);
   }
 
+  function processInputEl(el) {
+    if (!el || el.nodeType !== 1) return;
+    if (nearestExcluded(el)) return;
+    const raw =
+      el.tagName === "TEXTAREA" || el.tagName === "INPUT" ? el.value || "" : el.textContent || "";
+    const text = cleanText(raw);
+    if (!text) {
+      if (el.hasAttribute("dir")) el.removeAttribute("dir");
+      return;
+    }
+    setDir(el, dirFor(text));
+  }
+
   function applyInputDirections() {
     if (!cfg.isRTL) return;
     document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]').forEach((el) => {
-      const raw =
-        el.tagName === "TEXTAREA" || el.tagName === "INPUT" ? el.value || "" : el.textContent || "";
-      const text = cleanText(raw);
-      if (!text) {
-        if (el.hasAttribute("dir")) el.removeAttribute("dir");
+      processInputEl(el);
+    });
+  }
+
+  // ---------- Incremental path: process only what changed ----------
+  // Full-document applyTextDirections() is O(page). During streaming the
+  // app appends a few nodes per token, so re-scanning the whole tab per
+  // token is what melts large tabs. The observer below distills each
+  // mutation batch into a small dirty set; this processes just that set
+  // plus the container ancestors whose majority vote includes the new text.
+  function processContainerEl(el) {
+    if (nearestExcluded(el)) return;
+    const text = cleanText(proseText(el));
+    if (!text) return;
+    setDir(el, dirFor(text));
+  }
+
+  function collectDirty(record, out) {
+    const visit = (node) => {
+      if (!node) return;
+      if (node.nodeType === 3) {
+        // Text node (characterData or freshly added text): its parent
+        // element owns the direction vote.
+        if (node.parentElement) visit(node.parentElement);
         return;
       }
-      setDir(el, dirFor(text));
-    });
+      if (node.nodeType !== 1) return;
+      const el = node;
+      // Never touch our own UI, and never re-enter our own pin spans
+      // (their insertion is OUR write, not new content).
+      if (el.id === "oc-rtl-pill" || el.id === "oc-rtl-panel") return;
+      if (el.closest && el.closest("#oc-rtl-pill,#oc-rtl-panel")) return;
+      if (el.classList && (el.classList.contains("oc-rtl-num") || el.classList.contains("oc-rtl-ltr")))
+        return;
+      out.add(el);
+    };
+    if (record.type === "characterData" && record.target) {
+      visit(record.target);
+      return;
+    }
+    (record.addedNodes || []).forEach(visit);
+  }
+
+  function applyIncremental(dirty) {
+    if (!dirty || dirty.size === 0) return;
+    // A huge batch (tab switch, history restore, large paste) means the
+    // dirty set approaches the whole document anyway — one full scan is
+    // cheaper than hundreds of scoped queries.
+    if (dirty.size > 120) {
+      applyTextDirections();
+      return;
+    }
+    const containers = new Set();
+    for (const root of dirty) {
+      // Mirror the full-scan scope: only content under #root (plus the
+      // tab bar inside it). Overlays/portals outside #root are the app's
+      // own business.
+      try {
+        if (!root.closest || !root.closest("#root")) continue;
+      } catch (_) {
+        continue;
+      }
+      let self = null;
+      try {
+        if (root.matches(TEXT_TAGS_INNER)) self = root;
+        else if (root.matches(CONTAINER_INNER)) self = root;
+        else if (root.matches('[data-titlebar-tab-title]')) self = root;
+      } catch (_) {}
+      if (self) {
+        if (self.matches('[data-titlebar-tab-title]')) processTabTitle(self);
+        else if (self.matches(CONTAINER_INNER)) processContainerEl(self);
+        else processTextEl(self);
+      }
+      // Descendants of the added subtree (scoped, not document-wide).
+      try {
+        if (root.querySelectorAll) {
+          const subs = root.querySelectorAll(
+            TEXT_TAGS_INNER + "," + CONTAINER_INNER + ',[data-titlebar-tab-title]',
+          );
+          for (const el of subs) {
+            if (el.matches('[data-titlebar-tab-title]')) processTabTitle(el);
+            else if (el.matches(CONTAINER_INNER)) processContainerEl(el);
+            else processTextEl(el);
+          }
+          // Leaf-div descendants of an added markdown subtree.
+          const divs = root.querySelectorAll('[data-component="markdown"] div');
+          for (const el of divs) {
+            if (el.firstElementChild) continue;
+            if (nearestExcluded(el)) continue;
+            const text = cleanText(proseText(el));
+            if (text.length < 2) continue;
+            const dir = dirFor(text);
+            setDir(el, dir);
+            pinLeadingRun(el, dir);
+          }
+        }
+      } catch (_) {}
+      // Ancestors: a new paragraph changes its ul/table/blockquote's
+      // majority vote, so re-vote containers up to #root.
+      try {
+        let a = root.parentElement;
+        while (a && a !== document.body) {
+          if (a.id === "oc-rtl-pill" || a.id === "oc-rtl-panel") break;
+          if (a.matches && a.matches(CONTAINER_INNER)) containers.add(a);
+          if (a.id === "root") break;
+          a = a.parentElement;
+        }
+      } catch (_) {}
+    }
+    for (const el of containers) processContainerEl(el);
   }
 
   function clearAll() {
@@ -368,6 +510,13 @@
     // (CSS is scoped under body.oc-rtl-on) but stale spans trip the re-pin
     // signature guard on the next enable.
     document.querySelectorAll("#root [data-oc-pin-sig]").forEach((el) => clearPins(el));
+    // Drop per-element direction signatures so re-enabling re-votes text
+    // instead of trusting pre-disable verdicts.
+    document.querySelectorAll("#root [data-oc-dir-sig]").forEach((el) => {
+      try {
+        delete el.dataset.ocDirSig;
+      } catch (_) {}
+    });
   }
 
   function applyAll() {
@@ -385,7 +534,7 @@
   const IS_MAC = /Mac/i.test(navigator.userAgent || navigator.platform || "");
   const KEY_RTL = IS_MAC ? "⌥R" : "Alt+R";
   const KEY_FORCE = IS_MAC ? "⇧⌥R" : "Alt+Shift+R";
-  const VERSION = "0.4.4";
+  const VERSION = "0.4.7";
 
   function ensurePill() {
     if (document.getElementById("oc-rtl-pill")) return;
@@ -636,27 +785,129 @@
     }
   }
 
-  // ---------- Events ----------
+  // ---------- Events (throttled + incremental) ----------
+  // Was: every childList mutation → rAF → FULL document scan (clone every
+  // paragraph, TreeWalker + Range surgery per pin candidate), PLUS the same
+  // full scan on a 1.5s setInterval even when idle. On a tab with N blocks
+  // each streamed token cost O(N) DOM reads/writes, and our own pin-span
+  // insertions re-triggered the observer — a self-sustaining loop that
+  // keeps the renderer busy long after streaming ends. That is the slowdown.
+  //
+  // Now: mutation batches are distilled to a dirty set and processed
+  // incrementally, at most ~once per 250ms, on idle time, never while the
+  // tab is hidden. Our own writes run with the observer disconnected so
+  // they can't re-trigger it. characterData is observed so streamed text
+  // edits are caught without any polling interval.
+  let observer = null;
   let scheduled = false;
-  function schedule() {
+  let pendingRecords = [];
+
+  function takePending() {
+    const recs = pendingRecords;
+    pendingRecords = [];
+    return recs;
+  }
+
+  function runScheduled() {
+    scheduled = false;
+    if (document.hidden) {
+      // Tab hidden: drop the batch; visibilitychange does one catch-up
+      // full scan on return instead of burning CPU in the background.
+      pendingRecords = [];
+      return;
+    }
+    const recs = takePending();
+    try {
+      if (!cfg.isRTL) return;
+      const dirty = new Set();
+      for (const r of recs) {
+        try {
+          collectDirty(r, dirty);
+        } catch (_) {}
+        if (dirty.size > 150) break; // big enough — full scan wins
+      }
+      if (observer) observer.disconnect();
+      try {
+        if (recs.length === 0) applyTextDirections();
+        else if (dirty.size > 120) applyTextDirections();
+        else applyIncremental(dirty);
+      } finally {
+        observe();
+      }
+    } catch (_) {
+      try {
+        observe();
+      } catch (_) {}
+    }
+  }
+
+  function schedule(records) {
+    if (records && records.length) pendingRecords.push(...records);
+    // Cap the backlog: a tab restore can queue thousands of records;
+    // beyond this the incremental set is pointless, keep only the signal
+    // that *something* changed and let the runner fall back to full scan.
+    if (pendingRecords.length > 500) pendingRecords.splice(0, pendingRecords.length - 500);
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(() => {
-      scheduled = false;
+    const fire = () => runScheduled();
+    if (typeof requestIdleCallback === "function") {
       try {
-        if (cfg.isRTL) applyTextDirections();
+        requestIdleCallback(fire, { timeout: 250 });
+        return;
       } catch (_) {}
-    });
+    }
+    setTimeout(fire, 120);
+  }
+
+  function observe() {
+    if (!observer) return;
+    try {
+      observer.disconnect();
+    } catch (_) {}
+    try {
+      const target = document.getElementById("root") || document.body;
+      observer.observe(target, { childList: true, subtree: true, characterData: true });
+    } catch (_) {}
   }
 
   function startObserving() {
     try {
-      new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+      observer = new MutationObserver((recs) => schedule(recs));
+      observe();
+    } catch (_) {}
+    try {
+      // Catch-up pass when the tab becomes visible again; skipped work
+      // while hidden is reconciled here, once, instead of continuously.
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && cfg.isRTL) schedule(null);
+      });
     } catch (_) {}
   }
 
-  document.addEventListener("input", () => cfg.isRTL && applyInputDirections(), { capture: true });
-  document.addEventListener("focusin", () => cfg.isRTL && applyInputDirections(), { capture: true });
+  // Typing: only the edited field can have changed direction — never the
+  // whole document. (Was: full querySelectorAll over every input per keystroke.)
+  document.addEventListener(
+    "input",
+    (e) => {
+      if (!cfg.isRTL) return;
+      try {
+        const t = e.target && e.target.closest ? e.target.closest('textarea,input,[contenteditable="true"]') || e.target : e.target;
+        processInputEl(t);
+      } catch (_) {}
+    },
+    { capture: true },
+  );
+  document.addEventListener(
+    "focusin",
+    (e) => {
+      if (!cfg.isRTL) return;
+      try {
+        const t = e.target && e.target.closest ? e.target.closest('textarea,input,[contenteditable="true"]') || e.target : e.target;
+        processInputEl(t);
+      } catch (_) {}
+    },
+    { capture: true },
+  );
   document.addEventListener("keydown", (e) => {
     if (e.altKey && (e.code === "KeyR" || e.key === "®")) {
       e.preventDefault();
@@ -671,14 +922,10 @@
     }
   });
 
-  setInterval(() => {
-    try {
-      if (cfg.isRTL) {
-        applyInputDirections();
-        applyTextDirections();
-      }
-    } catch (_) {}
-  }, 1500);
+  // NOTE: no setInterval poller. Streaming text edits arrive as
+  // characterData mutations (observed above); a timer that re-scans the
+  // whole tab every 1.5s — idle or not — was the single largest source of
+  // sustained CPU on large tabs.
 
   // ---------- Boot ----------
   function boot() {
