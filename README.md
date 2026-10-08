@@ -22,6 +22,7 @@ UI-only RTL patcher for the **OpenCode desktop app** (macOS, Windows, Linux). In
 ```sh
 npx @smhd/opencode-rtl                 # patch (quit OpenCode first)
 npx @smhd/opencode-rtl --status        # check state
+npx @smhd/opencode-rtl --probe         # diagnose a patch failure (paste the output in an issue)
 npx @smhd/opencode-rtl --restore       # revert to original
 ```
 
@@ -36,6 +37,7 @@ bun install          # once (@electron/asar)
 
 bun bin/opencode-rtl.js            # patch (quit OpenCode first)
 bun bin/opencode-rtl.js --status   # check state
+bun bin/opencode-rtl.js --probe    # diagnose a patch failure
 bun bin/opencode-rtl.js --restore  # revert to original
 ```
 
@@ -48,7 +50,7 @@ Auto-detection searches these `app.asar` paths (override with
 | ------- | --------------------------------------------------------- | --------- |
 | macOS   | `/Applications/OpenCode.app/Contents/Resources/app.asar`  | DMG / brew |
 | Windows | `%LOCALAPPDATA%\Programs\OpenCode\resources\app.asar`              | official installer (NSIS per-user) |
-| Windows | `%LOCALAPPDATA%\Programs\@opencodedesktop\resources\app.asar`     | website-install layout seen in the wild |
+| Windows | `%LOCALAPPDATA%\Programs\@opencodedesktop\resources\app.asar`     | website-install layout seen in the wild — unverified, may not be the OpenCode desktop app; if the patch fails here, run `--probe` and use `--path` |
 | Windows | `%USERPROFILE%\scoop\apps\opencode-desktop\current\resources\app.asar` | Scoop |
 | Windows | `%PROGRAMFILES%\OpenCode\resources\app.asar`              | fallback (per-machine installs) |
 | Linux   | `/opt/OpenCode/resources/app.asar`                        | .deb |
@@ -70,6 +72,16 @@ install instead, or point `--path` at an extracted copy.
   (`sudo npx @smhd/opencode-rtl`).
 
 On detection failure the tool prints every path it searched.
+
+## Troubleshooting a patch failure
+
+If patching fails with "No patchable renderer entry", run
+`npx @smhd/opencode-rtl --probe` and paste the full output in an issue.
+It shows which `app.asar` was picked, whether it looks like the OpenCode
+desktop app (package.json identity), and what the archive actually
+contains (html files, oc-theme files, top-level dirs). If the auto-detected
+path is not your OpenCode install, re-run with
+`--path <.../app.asar>` pointing at the real one.
 
 ## Notes
 

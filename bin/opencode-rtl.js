@@ -8,7 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   detectAsarPath,
-  candidateAsarPaths,
+  describeCandidates,
+  describeAsar,
+  formatAsarDescription,
+  inspectAsarIdentity,
   detectUnpatchableInstall,
   isPatched,
   hasBackup,
@@ -26,6 +29,9 @@ function help() {
 Usage:
   opencode-rtl                  Patch auto-detected OpenCode install
   opencode-rtl --status         Show patch status
+  opencode-rtl --probe          Diagnose: list searched paths and describe
+                               the detected app.asar (paste the output
+                               when reporting a patch failure)
   opencode-rtl --restore        Restore original app.asar from backup
   opencode-rtl --path <asar>    Use a custom app.asar path
   opencode-rtl -h | --help      This help
@@ -63,7 +69,8 @@ function resolveAsar() {
   const found = detectAsarPath();
   if (!found) {
     console.error("Could not locate OpenCode app.asar. Searched:");
-    for (const c of candidateAsarPaths()) console.error(`  - ${c}`);
+    for (const c of describeCandidates())
+      console.error(`  ${c.exists ? "[found] " : "  [missing] "}${c.path}${c.exists ? ` — ${c.reason}` : ""}`);
     const blocked = detectUnpatchableInstall();
     if (blocked?.kind === "AppImage") {
       console.error(`\nFound an AppImage at ${blocked.path}, but AppImages are`);
@@ -81,6 +88,20 @@ function resolveAsar() {
   return found;
 }
 
+function warnIfSuspiciousAsar(asarPath) {
+  let id;
+  try {
+    id = inspectAsarIdentity(asarPath);
+  } catch {
+    return;
+  }
+  if (!id.ok)
+    console.log(
+      `Note: ${asarPath}\n  does not look like the OpenCode desktop app (${id.reason}).\n` +
+        `  Trying anyway — if the patch fails, run with --probe and use --path <.../app.asar>.`,
+    );
+}
+
 if (args.includes("-h") || args.includes("--help")) {
   help();
   process.exit(0);
@@ -91,6 +112,24 @@ if (args.includes("--status")) {
   console.log(`asar:    ${asar}`);
   console.log(`patched: ${isPatched(asar) ? "yes" : "no"}`);
   console.log(`backup:  ${hasBackup(asar) ? "present" : "absent"}`);
+  process.exit(0);
+}
+
+if (args.includes("--probe")) {
+  console.log("Searched app.asar paths:");
+  for (const c of describeCandidates())
+    console.log(
+      `  ${c.exists ? (c.ok ? "[found] " : "[found?]") : "[missing]"} ${c.path}${c.exists ? ` — ${c.reason}` : ""}`,
+    );
+  const i = args.indexOf("--path");
+  const target = (i !== -1 && args[i + 1]) || detectAsarPath();
+  if (!target) {
+    console.log("\nNo existing app.asar to describe. Pass --path <.../app.asar>.");
+    process.exit(0);
+  }
+  console.log(`\n${formatAsarDescription(describeAsar(target))}`);
+  console.log(`\npatched: ${isPatched(target) ? "yes" : "no"}`);
+  console.log(`backup:  ${hasBackup(target) ? "present" : "absent"}`);
   process.exit(0);
 }
 
@@ -108,6 +147,7 @@ if (args.includes("--restore") || args.includes("-r")) {
 
 // default: patch
 const asar = resolveAsar();
+warnIfSuspiciousAsar(asar);
 if (/\.appimage$/i.test(asar) || /(^|\/)snap\//.test(asar)) {
   console.error(`\n${asar} looks like an AppImage/snap install, which is read-only`);
   console.error("squashfs and cannot be patched in place.");
@@ -152,6 +192,8 @@ try {
     }
   } else {
     console.error(`\nPatch failed: ${msg}`);
+    console.error("Run with --probe and paste the output when reporting this,");
+    console.error("or point --path at the real OpenCode app.asar.");
   }
   if (fs.existsSync(path.join(path.dirname(asar), "app-extracted-oc-rtl-temp"))) {
     fs.rmSync(path.join(path.dirname(asar), "app-extracted-oc-rtl-temp"), {
