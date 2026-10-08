@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.4 — UI-only. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.4.10 — UI-only. No model/prompt/tool changes.
  * The font data URI below is filled with base64 at patch time (offline
  * embedding, no extra file request). Do not break up the token on line 10:
  * patch.js replaces its first occurrence.

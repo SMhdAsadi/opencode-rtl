@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.8 — UI-only runtime. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.4.10 — UI-only runtime. No model/prompt/tool changes.
  * - Content-aware direction: each block AND each list/table/quote container
  *   follows its own majority script (RTL vs Latin). Diffs/code stay LTR.
  * - Settings in localStorage (global across repos).
@@ -102,6 +102,68 @@
     ' [data-component="markdown"] table, [data-component="markdown"] blockquote';
   const INPUT_INNER = 'textarea,input,[contenteditable="true"]';
   const EXCLUDE_SEL = "pre, code, .xterm, [class*=monaco], [class*=terminal], kbd";
+  // Tool/timeline chrome (divs/buttons — never prose). A text-tag ancestor
+  // (e.g. a timeline <li>) can wrap BOTH Persian explanations AND English
+  // tool cards; voting on its combined textContent flips the whole item RTL
+  // (icon order, header layout) via inheritance, while the English rows
+  // themselves carry no dir to override it. Such containers must stay
+  // direction-neutral so each child block keeps its own verdict.
+  const CHROME_INNER =
+    'div[data-component="tool-trigger"],div[data-component="card"],' +
+    'div[data-component="collapsible"],div[data-component="tool-part-wrapper"],' +
+    'div[data-component="tool-output"],div[data-component="task-tool-card"],' +
+    'div[data-component="attachment-card-v2"],div[data-component="tool-loaded-file"],' +
+    'button[data-slot="collapsible-trigger"]';
+
+  function hasToolChrome(el) {
+    try {
+      return !!el.querySelector(CHROME_INNER);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dropDir(el) {
+    try {
+      if (el.hasAttribute("dir")) el.removeAttribute("dir");
+    } catch (_) {}
+    try {
+      delete el.dataset.ocDirSig;
+    } catch (_) {}
+  }
+
+  // Stale-direction heal. The app natively uses dir="ltr"/"auto" attributes
+  // on a few components but NEVER dir="rtl" on a div/button — so a rtl div
+  // wrapping tool UI (or a rtl button) is always a stale write from the old
+  // focus-fallback path below, and the English rows inside flip via
+  // inheritance with no dir of their own to override it. Legit prose is
+  // untouched: markdown leaf divs have no element children (no chrome
+  // inside), and tab roots contain no tool chrome.
+  function isStaleChromeDir(el) {
+    try {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.getAttribute("dir") !== "rtl") return false;
+      if (el.closest && el.closest("#oc-rtl-pill,#oc-rtl-panel")) return false;
+      const tag = el.tagName;
+      if (tag === "BUTTON") return true;
+      if (tag !== "DIV") return false;
+      return hasToolChrome(el);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function healStaleChromeDir(scope) {
+    let found;
+    try {
+      found = (scope || document).querySelectorAll('div[dir="rtl"],button[dir="rtl"]');
+    } catch (_) {
+      return;
+    }
+    for (const el of found) {
+      if (isStaleChromeDir(el)) dropDir(el);
+    }
+  }
 
   function nearestExcluded(el) {
     try {
@@ -283,6 +345,14 @@
   function processTextEl(el) {
     if (el.tagName === "P" && el.closest('[contenteditable="true"]')) return; // input path
     if (nearestExcluded(el)) return;
+    // Chrome wrapper (timeline item wrapping tool cards + prose): never take
+    // a direction vote on the combined text — it would inherit onto the
+    // English rows. Drop any stale dir so the broken state heals on rescan.
+    if (hasToolChrome(el)) {
+      dropDir(el);
+      clearPins(el);
+      return;
+    }
     const raw = proseText(el);
     const text = cleanText(raw);
     if (!text) {
@@ -385,10 +455,30 @@
       tabTitles = [];
     }
     for (const el of tabTitles) processTabTitle(el);
+    // Heal stale container/button dirs (see isStaleChromeDir): full scans are
+    // where a pre-fix wrong verdict gets revisited and dropped.
+    try {
+      healStaleChromeDir(document);
+    } catch (_) {}
   }
 
   function processInputEl(el) {
     if (!el || el.nodeType !== 1) return;
+    // Fields only. Focus can land on buttons, links, or tabindex scroll
+    // containers; voting on such an element's whole-subtree textContent (e.g.
+    // a turn wrapper holding Persian prose) stamps dir on a shared container
+    // and flips every tool row inside it via inheritance. Never do that.
+    try {
+      const tag = el.tagName;
+      const editable =
+        tag === "TEXTAREA" ||
+        tag === "INPUT" ||
+        el.isContentEditable ||
+        (el.getAttribute && el.getAttribute("contenteditable") === "true");
+      if (!editable) return;
+    } catch (_) {
+      return;
+    }
     if (nearestExcluded(el)) return;
     const raw =
       el.tagName === "TEXTAREA" || el.tagName === "INPUT" ? el.value || "" : el.textContent || "";
@@ -415,6 +505,10 @@
   // plus the container ancestors whose majority vote includes the new text.
   function processContainerEl(el) {
     if (nearestExcluded(el)) return;
+    if (hasToolChrome(el)) {
+      dropDir(el);
+      return;
+    }
     const text = cleanText(proseText(el));
     if (!text) return;
     setDir(el, dirFor(text));
@@ -535,6 +629,9 @@
               textTaken = true;
             }
             if (a.matches && a.matches(CONTAINER_INNER)) containers.add(a);
+            // Heal stale container/button dirs on the way up (pre-fix
+            // focus-fallback writes): cheap, ancestors are few.
+            if (isStaleChromeDir(a)) dropDir(a);
           } catch (_) {}
           if (a.id === "root") break;
           a = a.parentElement;
@@ -575,7 +672,7 @@
   const IS_MAC = /Mac/i.test(navigator.userAgent || navigator.platform || "");
   const KEY_RTL = IS_MAC ? "⌥R" : "Alt+R";
   const KEY_FORCE = IS_MAC ? "⇧⌥R" : "Alt+Shift+R";
-  const VERSION = "0.4.8";
+  const VERSION = "0.4.10";
 
   function ensurePill() {
     if (document.getElementById("oc-rtl-pill")) return;
@@ -929,14 +1026,24 @@
     } catch (_) {}
   }
 
-  // Typing: only the edited field can have changed direction — never the
-  // whole document. (Was: full querySelectorAll over every input per keystroke.)
+  // Typing/focus: only the edited FIELD can have changed direction — never
+  // the whole document. (Was: full querySelectorAll over every input per
+  // keystroke.) Note there is deliberately NO fallback to e.target here: a
+  // focusin/input on a button, link, or tabindex container must not
+  // direction-vote that element's whole subtree.
+  function closestField(node) {
+    try {
+      if (node && node.closest) return node.closest('textarea,input,[contenteditable="true"]');
+    } catch (_) {}
+    return null;
+  }
   document.addEventListener(
     "input",
     (e) => {
       if (!cfg.isRTL) return;
       try {
-        const t = e.target && e.target.closest ? e.target.closest('textarea,input,[contenteditable="true"]') || e.target : e.target;
+        const t = closestField(e.target);
+        if (!t) return;
         processInputEl(t);
       } catch (_) {}
     },
@@ -947,7 +1054,8 @@
     (e) => {
       if (!cfg.isRTL) return;
       try {
-        const t = e.target && e.target.closest ? e.target.closest('textarea,input,[contenteditable="true"]') || e.target : e.target;
+        const t = closestField(e.target);
+        if (!t) return;
         processInputEl(t);
       } catch (_) {}
     },
