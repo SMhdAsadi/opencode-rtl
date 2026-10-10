@@ -1,4 +1,4 @@
-/* OPENCODE RTL PATCH v0.4.10 — UI-only runtime. No model/prompt/tool changes.
+/* OPENCODE RTL PATCH v0.5.0 — UI-only runtime. No model/prompt/tool changes.
  * - Content-aware direction: each block AND each list/table/quote container
  *   follows its own majority script (RTL vs Latin). Diffs/code stay LTR.
  * - Settings in localStorage (global across repos).
@@ -643,7 +643,9 @@
   }
 
   function clearAll() {
-    document.querySelectorAll("#root [dir]").forEach((el) => el.removeAttribute("dir"));
+    // NOTE: our header button lives INSIDE #root (session-title/titlebar)
+    // and carries dir="ltr" — spare it (and the panel) here.
+    document.querySelectorAll("#root [dir]:not(#oc-rtl-pill):not(#oc-rtl-panel)").forEach((el) => el.removeAttribute("dir"));
     // Unwrap leading-run pins too — they are visually inert while disabled
     // (CSS is scoped under body.oc-rtl-on) but stale spans trip the re-pin
     // signature guard on the next enable.
@@ -668,34 +670,154 @@
     updatePill();
   }
 
-  // ---------- Floating pill + popup panel ----------
+  // ---------- Header RTL button + popup panel ----------
+  // Native-like placement: an icon-only button beside the session header
+  // actions (usage pill + overflow menu, top-right of the session title
+  // row), falling back to the global titlebar mount and finally to a fixed
+  // top-right slot. Icon-only like its neighbours; a small badge dot shows
+  // state (green = on, blue = force-RTL, hidden = off).
   const IS_MAC = /Mac/i.test(navigator.userAgent || navigator.platform || "");
   const KEY_RTL = IS_MAC ? "⌥R" : "Alt+R";
   const KEY_FORCE = IS_MAC ? "⇧⌥R" : "Alt+Shift+R";
-  const VERSION = "0.4.10";
+  const VERSION = "0.5.0";
+  const RTL_ICON_SVG =
+    '<svg data-slot="icon-svg" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+    '<path d="M13.5 3.5H4.4M4.4 3.5 6.6 1.3M4.4 3.5l2.2 2.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/>' +
+    '<path d="M13.5 8h-9M13.5 12.5h-9" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/>' +
+    "</svg>";
 
-  function ensurePill() {
-    if (document.getElementById("oc-rtl-pill")) return;
+  function rtlButtonHTML() {
+    return RTL_ICON_SVG + '<span class="oc-rtl-badge" aria-hidden="true"></span>';
+  }
+
+  // Find the session header's right-side actions container:
+  // [data-session-title] > div (h-12 flex row) > last div (actions wrapper
+  // holding the usage pill + overflow menu trigger).
+  function sessionActionsContainer() {
+    try {
+      const title = document.querySelector("[data-session-title]");
+      if (!title) return null;
+      const row = title.querySelector(":scope > div");
+      if (!row) return null;
+      const kids = Array.from(row.children).filter((n) => n && n.nodeType === 1);
+      if (kids.length >= 2) return kids[kids.length - 1];
+      return row;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function createPill() {
     const pill = document.createElement("button");
     pill.id = "oc-rtl-pill";
     pill.type = "button";
     pill.setAttribute("dir", "ltr");
-    pill.innerHTML = '<span class="oc-rtl-dot"></span><span>RTL</span><span class="oc-rtl-state"></span>';
+    pill.setAttribute("data-component", "icon-button-v2");
+    pill.setAttribute("data-size", "large");
+    pill.setAttribute("data-variant", "ghost-muted");
+    pill.className = "!w-9 shrink-0";
+    pill.setAttribute("aria-label", "RTL settings");
+    pill.setAttribute("aria-expanded", "false");
+    pill.innerHTML = rtlButtonHTML();
     pill.addEventListener("click", (e) => {
       e.stopPropagation();
       togglePanel();
     });
-    document.body.appendChild(pill);
+    return pill;
+  }
+
+  function placePill() {
+    // The header is Solid-rendered and may replace our container on
+    // navigation — recreate the button if a re-render destroyed it.
+    let pill = document.getElementById("oc-rtl-pill");
+    if (!pill) {
+      try {
+        pill = createPill();
+        document.body.appendChild(pill);
+      } catch (_) {
+        return;
+      }
+    }
+    // 1. Session header actions (the correct place — top-right of the
+    //    session title row, beside the other icon buttons).
+    const actions = sessionActionsContainer();
+    if (actions) {
+      if (pill.parentElement !== actions) {
+        // Slot it before the overflow-menu trigger (last native icon
+        // button) so order reads: usage pill, RTL, overflow menu.
+        let anchor = null;
+        try {
+          const natives = actions.querySelectorAll(
+            ':scope button[data-component="icon-button-v2"], :scope button[data-component="icon-button"]',
+          );
+          if (natives.length) anchor = natives[natives.length - 1];
+        } catch (_) {}
+        try {
+          if (anchor && anchor.parentElement === actions) actions.insertBefore(pill, anchor);
+          else actions.appendChild(pill);
+        } catch (_) {}
+      }
+      try {
+        pill.removeAttribute("data-oc-rtl-fallback");
+      } catch (_) {}
+      return;
+    }
+    // 2. Global titlebar mount (home/empty states with no session header).
+    try {
+      const bar = document.getElementById("opencode-titlebar-right");
+      if (bar) {
+        if (pill.parentElement !== bar) {
+          try {
+            bar.appendChild(pill);
+          } catch (_) {}
+        }
+        try {
+          pill.removeAttribute("data-oc-rtl-fallback");
+        } catch (_) {}
+        return;
+      }
+    } catch (_) {}
+    // 3. Last resort: fixed top-right slot so the toggle is never lost.
+    if (pill.parentElement !== document.body) {
+      try {
+        document.body.appendChild(pill);
+      } catch (_) {}
+    }
+    try {
+      pill.setAttribute("data-oc-rtl-fallback", "true");
+    } catch (_) {}
+  }
+
+  function ensurePill() {
+    if (!document.getElementById("oc-rtl-pill")) {
+      try {
+        document.body.appendChild(createPill());
+      } catch (_) {}
+    }
+    // Mount in the right place from the start (placePill falls back
+    // gracefully when the header is not mounted yet).
+    placePill();
     ensurePanel();
     checkFont();
   }
 
   function updatePill() {
+    placePill();
     const pill = document.getElementById("oc-rtl-pill");
     if (!pill) return;
-    const s = pill.querySelector(".oc-rtl-state");
-    if (s) s.textContent = !cfg.isRTL ? "off" : cfg.forceRTL ? "⇉" : "";
-    pill.title = "OpenCode RTL — click for settings";
+    const state = !cfg.isRTL ? "off" : cfg.forceRTL ? "force" : "on";
+    try {
+      pill.setAttribute("data-oc-rtl-state", state);
+    } catch (_) {}
+    const panel = document.getElementById("oc-rtl-panel");
+    const open = panel ? !panel.hidden : false;
+    try {
+      pill.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) pill.setAttribute("data-state", "pressed");
+      else pill.removeAttribute("data-state");
+    } catch (_) {}
+    pill.title =
+      "OpenCode RTL (" + state + ", " + fontStatus + ") — click for settings";
     refreshPanel();
   }
 
@@ -786,11 +908,17 @@
     if (!p) return;
     p.hidden = !p.hidden;
     if (!p.hidden) refreshPanel();
+    updatePill();
   }
 
   function closePanel() {
     const p = document.getElementById("oc-rtl-panel");
-    if (p) p.hidden = true;
+    if (p && !p.hidden) {
+      p.hidden = true;
+      updatePill();
+    } else if (p) {
+      p.hidden = true;
+    }
   }
 
   function refreshPanel() {
@@ -956,7 +1084,6 @@
     }
     const recs = takePending();
     try {
-      if (!cfg.isRTL) return;
       const dirty = new Set();
       for (const r of recs) {
         try {
@@ -966,13 +1093,22 @@
       }
       if (observer) observer.disconnect();
       try {
-        if (recs.length === 0 || dirty.size > 120) {
-          // Visibility catch-up (no records) or huge batch: one full scan
-          // covering text AND inputs — the incremental path below handles
-          // neither the empty set nor document-scale batches.
-          applyTextDirections();
-          applyInputDirections();
-        } else applyIncremental(dirty);
+        if (cfg.isRTL) {
+          if (recs.length === 0 || dirty.size > 120) {
+            // Visibility catch-up (no records) or huge batch: one full scan
+            // covering text AND inputs — the incremental path below handles
+            // neither the empty set nor document-scale batches.
+            applyTextDirections();
+            applyInputDirections();
+          } else applyIncremental(dirty);
+        }
+        // Header re-renders (navigation, layout switch) may have replaced
+        // our button's container — re-seat it while disconnected so the
+        // move itself never re-triggers the observer. Runs even while
+        // disabled so the toggle is never lost.
+        try {
+          placePill();
+        } catch (_) {}
       } finally {
         observe();
       }

@@ -10,8 +10,8 @@ UI-only RTL patcher for the **OpenCode desktop app** (macOS, Windows, Linux). In
   leading number runs (`۱۲. عنوان`) are pinned to the line start
 - Code blocks, terminal, editor, diffs always stay LTR (real monospace stack)
 - Offline Vazirmatn font, base64-embedded in the stylesheet (no extra request)
-- Hover the `RTL` pill to see font status (`Vazirmatn OK` vs `MISSING`)
-- Floating `RTL` pill (bottom corner) opens a settings popup: on/off and
+- Hover the header `RTL` button to see state and font status (`Vazirmatn OK` vs `MISSING`)
+- Header `RTL` button (top-right, beside the session actions) opens a settings popup: on/off and
   Force-RTL switches, font status, all shortcuts listed, debug snapshot copy
 - Hover-free: no guessing — every shortcut is shown in the popup
 - Settings persist in the app's localStorage → global across all repos
